@@ -1,7 +1,7 @@
 {
-  "name": "kbzpaybackend",
+  "name": "wavepaybackend",
   "version": "1.0.0",
-  "description": "KBZPay Telegram Mini App Backend",
+  "description": "WavePay Telegram Mini App Backend",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

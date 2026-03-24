@@ -33,7 +33,7 @@ const REFERRAL_BONUS = Number(process.env.REFERRAL_BONUS) || 5000;
 const PAYMENT_PHONE  = process.env.PAYMENT_PHONE  || '09783646736';
 const PAYMENT_NAME   = process.env.PAYMENT_NAME   || 'Yee Mon Naing';
 const BOT_USERNAME   = process.env.BOT_USERNAME   || 'YourBotUsername';
-const FRONTEND_URL   = 'https://kbzpayfrontend.vercel.app';
+const FRONTEND_URL   = 'https://wavemoneeyfrontend.vercel.app';
 // Channel that users must join before using the bot
 const CHANNEL_ID     = process.env.CHANNEL_ID    || '@Kbzzpay';   // e.g. @Kbzzpay
 const CHANNEL_LINK   = process.env.CHANNEL_LINK  || 'https://t.me/Kbzzpay';
@@ -182,8 +182,8 @@ const ALLOWED_ORIGINS = [
   FRONTEND_URL,
   FRONTEND_URL,
   'https://wavepay.vercel.app',
-  'https://kbzpayfrontend.vercel.app',
-  'https://kbzpaybackend.onrender.com',
+  'https://wavemoneeyfrontend.vercel.app',
+  'https://wavemoneeeybackend.onrender.com',
   'http://localhost:3000',
   'http://localhost:5000',
 ];
