@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: wavepay-backend
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "10000"
+      - key: MIN_WITHDRAW
+        value: "100000"
+      - key: SERVICE_FEE
+        value: "5000"
+      - key: REFERRAL_BONUS
+        value: "5000"
+      - key: PAYMENT_PHONE
+        value: "09702310926"
+      - key: PAYMENT_NAME
+        value: "Daw Mi Thaung"
+      # ── အောက်တွင် Render Dashboard → Environment ထဲ ဖြည့်ပါ ──
+      - key: MONGODB_URI
+        sync: false
+      - key: BOT_TOKEN
+        sync: false
+      - key: BOT_USERNAME
+        sync: false
+      - key: ADMIN_CHAT_ID
+        sync: false
+      - key: ADMIN_SECRET
+        sync: false
+      - key: CHANNEL_ID
+        sync: false
+      - key: CHANNEL_LINK
+        sync: false
