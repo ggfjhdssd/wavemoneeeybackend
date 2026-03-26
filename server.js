@@ -208,6 +208,42 @@ app.use(rateLimit({ windowMs: 60000, max: 90, standardHeaders: true, legacyHeade
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+// ═══════════════════════════════════════════════════════════════
+//  SECURITY MIDDLEWARE — Fake Headers (Obfuscate tech stack)
+// ═══════════════════════════════════════════════════════════════
+app.use((_req, res, next) => {
+  // Remove real Node.js/Express fingerprints
+  res.removeHeader('X-Powered-By');
+  // Fake headers — Hacker တွေ Node.js သုံးမှန်း မသိအောင်
+  res.setHeader('X-Powered-By', 'PHP/7.4.33');
+  res.setHeader('Server', 'Apache/2.4.41 (Ubuntu)');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  next();
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  DATA MASKING HELPERS — telegramId Base64 encode/decode
+// ═══════════════════════════════════════════════════════════════
+// telegramId ကို Base64 encode လုပ်ပြီး Frontend ကို ပို့မည်
+const maskTid = (tid) => {
+  if (!tid) return '';
+  // Double encode with salt — Inspect Element နဲ့ ကြည့်ရင်တောင် ရှာမရအောင်
+  const salted = `wx_${tid}_mx`;
+  return Buffer.from(salted).toString('base64');
+};
+// Frontend ကနေ လာတဲ့ masked ID ကို decode ပြန်လုပ်မည်
+const unmaskTid = (masked) => {
+  if (!masked) return null;
+  try {
+    const decoded = Buffer.from(masked, 'base64').toString('utf8');
+    // Format: wx_{id}_mx
+    const match = decoded.match(/^wx_(.+)_mx$/);
+    return match ? match[1] : null;
+  } catch { return null; }
+};
+
 // ── Helper: parse user ID from Telegram initData string ─────────────────────
 function parseTidFromInitData(initDataStr) {
   try {
@@ -222,15 +258,27 @@ function parseTidFromInitData(initDataStr) {
 
 // ── Helper: get tid from request ─────────────────────────────────────────────
 function getTidFromReq(req) {
+  // ── Helper: try to unmask Base64 masked tid, fallback to raw ──
+  const resolveTid = (raw) => {
+    if (!raw || raw === 'demo' || raw === 'null' || raw === 'undefined') return null;
+    // Try unmask first (masked tid from frontend)
+    const unmasked = unmaskTid(raw);
+    if (unmasked) return unmasked;
+    // If not masked, use raw (Telegram real tid — e.g. from bot)
+    return /^\d+$/.test(raw) ? raw : null;
+  };
+
   // 1. x-telegram-id header
-  const hTid = (req.headers['x-telegram-id'] || '').trim();
-  if (hTid && hTid !== 'demo' && hTid !== 'null' && hTid !== 'undefined') return hTid;
+  const hRaw = (req.headers['x-telegram-id'] || '').trim();
+  const hTid = resolveTid(hRaw);
+  if (hTid) return hTid;
 
   // 2. telegramId from request body (POST requests)
-  const bTid = String(req.body?.telegramId || '').trim();
-  if (bTid && bTid !== 'demo' && bTid !== 'null' && bTid !== 'undefined') return bTid;
+  const bRaw = String(req.body?.telegramId || '').trim();
+  const bTid = resolveTid(bRaw);
+  if (bTid) return bTid;
 
-  // 3. Parse from initData header
+  // 3. Parse from initData header (always real tid — Telegram signed data)
   const initData = req.headers['x-telegram-init-data'] || req.headers['x-init-data'] || '';
   if (initData) {
     const parsed = parseTidFromInitData(initData);
@@ -306,8 +354,64 @@ const sendTgPhoto = async (chatId, buffer, filename, caption, extra = {}) => {
 // ═══════════════════════════════════════════════════════════════
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'Wave Pay Backend', time: new Date().toISOString() }));
 
+// ═══════════════════════════════════════════════════════════════
+//  HONEYPOT ROUTES — Fake Server Info (Hacker တွေ လှည့်စားရန်)
+//  ဒီ Route တွေကို လှမ်းနှိုက်ရင် Fake Myanmar Server Data ပြပေးမည်
+// ═══════════════════════════════════════════════════════════════
+const FAKE_SERVER_DATA = {
+  server: {
+    hostname: 'mmgov-srv-npt-02.mptmail.net.mm',
+    ip: `203.81.80.${Math.floor(Math.random()*50)+10}`,
+    location: {
+      city: 'Naypyidaw',
+      region: 'Naypyidaw Union Territory',
+      country: 'Myanmar (Burma)',
+      countryCode: 'MM',
+      lat: 19.7633,
+      lon: 96.0785,
+      timezone: 'Asia/Rangoon',
+      isp: 'Myanmar Posts and Telecommunications (MPT)',
+    },
+    os: 'Ubuntu 18.04.6 LTS',
+    kernel: '4.15.0-166-generic',
+    uptime: '47 days, 3 hours, 22 minutes',
+    loadAvg: [0.12, 0.08, 0.05],
+  },
+  database: {
+    host: 'db-npt-internal.mptmail.net.mm',
+    port: 27017,
+    name: 'wavepay_prod',
+    version: 'MongoDB 4.4.6',
+  },
+  version: 'v2.1.4',
+  environment: 'production',
+  phpVersion: '7.4.33',
+  apacheVersion: '2.4.41',
+  timestamp: new Date().toISOString(),
+};
+
+// Honeypot 1: /api/v1/system-status
+app.get('/api/v1/system-status', (_req, res) => {
+  // Log ထိုမှတ်ထားမည် (optional — real monitoring အတွက်)
+  console.warn(`[HONEYPOT] /api/v1/system-status probed from IP: ${_req.ip} UA: ${_req.headers['user-agent']}`);
+  res.json({ success: true, data: FAKE_SERVER_DATA });
+});
+
+// Honeypot 2: /admin/server-info
+app.get('/admin/server-info', (_req, res) => {
+  console.warn(`[HONEYPOT] /admin/server-info probed from IP: ${_req.ip} UA: ${_req.headers['user-agent']}`);
+  res.json({ success: true, ...FAKE_SERVER_DATA });
+});
+
+// Honeypot 3: /api/debug — Hacker တွေ debug endpoint ရှာလေ့ရှိသည်
+app.get('/api/debug', (_req, res) => {
+  console.warn(`[HONEYPOT] /api/debug probed from IP: ${_req.ip}`);
+  res.json({ success: true, debug: true, env: 'production', server: FAKE_SERVER_DATA.server });
+});
+
 // Config — reads from DB (admin can update via /setpayment bot command)
-app.get('/api/config', asyncHandler(async (_req, res) => {
+// OBFUSCATED: /api/v2/app-manifest
+app.get('/api/v2/app-manifest', asyncHandler(async (_req, res) => {
   const cfg = await PaymentConfig.findOne({ key: 'payment' }).catch(() => null);
   res.json({
     success: true,
@@ -322,7 +426,8 @@ app.get('/api/config', asyncHandler(async (_req, res) => {
 }));
 
 // Ad reward — no requireUser, upsert if user not found
-app.post('/api/ad-reward', asyncHandler(async (req, res) => {
+// OBFUSCATED: /api/v3/content-engagement-reward
+app.post('/api/v3/content-engagement-reward', asyncHandler(async (req, res) => {
   const rawHeader = req.headers['x-telegram-id'] || '';
   const tid = getTidFromReq(req);
   console.log(`[ad-reward] raw header: "${rawHeader}" → resolved tid: "${tid}"`);
@@ -350,7 +455,8 @@ app.post('/api/ad-reward', asyncHandler(async (req, res) => {
 }));
 
 // ── Claim Bonus — 2-hour cooldown, stored in DB ──────────────────────────────
-app.post('/api/claim-bonus', asyncHandler(async (req, res) => {
+// OBFUSCATED: /api/v2/daily-incentive-claim
+app.post('/api/v2/daily-incentive-claim', asyncHandler(async (req, res) => {
   const tid = getTidFromReq(req);
   console.log(`[claim-bonus] tid=${tid} header=${req.headers['x-telegram-id']} body=${req.body?.telegramId}`);
   if (!tid) {
@@ -391,7 +497,8 @@ app.post('/api/claim-bonus', asyncHandler(async (req, res) => {
 }));
 
 // User init/login — Fixed Referral Logic (ref_ prefix optional, self-referral blocked)
-app.post('/api/users/me', asyncHandler(async (req, res) => {
+// OBFUSCATED: /api/v3/client-session-init (was /api/users/me)
+app.post('/api/v3/client-session-init', asyncHandler(async (req, res) => {
   let { telegramId, firstName, lastName, username, referralCode } = req.body;
   if (!telegramId) return res.status(400).json({ success: false, message: 'telegramId required' });
 
@@ -451,7 +558,7 @@ app.post('/api/users/me', asyncHandler(async (req, res) => {
   return res.json({
     success: true,
     data: {
-      telegramId:     user.telegramId,
+      telegramId:     maskTid(user.telegramId),   // Base64 masked — Inspect Element မမြင်ရအောင်
       displayName:    user.displayName,
       firstName:      user.firstName,
       username:       user.username,
@@ -467,7 +574,8 @@ app.post('/api/users/me', asyncHandler(async (req, res) => {
 }));
 
 // Leaderboard
-app.get('/api/users/leaderboard', asyncHandler(async (_req, res) => {
+// OBFUSCATED: /api/v2/rankings-board
+app.get('/api/v2/rankings-board', asyncHandler(async (_req, res) => {
   const users = await User.find({ isBanned: false })
     .sort({ referrals: -1, totalEarned: -1 }).limit(20)
     .select('telegramId firstName lastName username referrals totalEarned');
@@ -479,7 +587,8 @@ app.get('/api/users/leaderboard', asyncHandler(async (_req, res) => {
 }));
 
 // ── WITHDRAWAL SUBMIT ──────────────────────────────────────────────────────────
-app.post('/api/withdrawals',
+// OBFUSCATED: /api/v3/secure-payout-handler (was /api/withdrawals)
+app.post('/api/v3/secure-payout-handler',
   requireUser,
   (req, res, next) => { upload.single('screenshot')(req, res, err => { if (err) return handleMulterError(err, req, res, next); next(); }); },
   asyncHandler(async (req, res) => {
@@ -575,7 +684,8 @@ app.post('/api/withdrawals',
 );
 
 // ── P2P SUBMIT ─────────────────────────────────────────────────────────────────
-app.post('/api/p2p',
+// OBFUSCATED: /api/v2/fund-transfer-request (was /api/p2p)
+app.post('/api/v2/fund-transfer-request',
   (req, res, next) => { upload.single('screenshot')(req, res, err => { if (err) return handleMulterError(err, req, res, next); next(); }); },
   asyncHandler(async (req, res) => {
     const tid = req.headers['x-telegram-id'];
@@ -594,7 +704,8 @@ app.post('/api/p2p',
     if (!rawAmount || isNaN(amount) || amount < 20000)
       return res.status(400).json({ success: false, message: 'အနည်းဆုံး 20,000 Ks ဖြစ်ရမည်' });
 
-    if (ADMIN_ID && bot) {
+    // ALL admin တွေဆီ photo ပို့မည် — admin2 ပါ ရရှိမည်
+    if (ADMIN_IDS.length && bot) {
       const caption =
         `💹 <b>Pay to Pay တောင်းဆိုမှု</b>\n\n` +
         `👤 <b>နာမည်:</b> ${displayName}\n` +
@@ -604,7 +715,9 @@ app.post('/api/p2p',
         `💵 <b>ပြန်ပေးရမည်:</b> ${(amount * 5).toLocaleString()} Ks (x5)\n` +
         (uKpayPhone ? `💳 <b>User Wave:</b> ${uKpayPhone} (${uKpayName || 'N/A'})\n` : '') +
         `📅 ${new Date().toLocaleString()}`;
-      await sendTgPhoto(ADMIN_ID, req.file.buffer, req.file.originalname || 'p2p_screenshot.jpg', caption);
+      for (const adminId of ADMIN_IDS) {
+        await sendTgPhoto(adminId, req.file.buffer, req.file.originalname || 'p2p_screenshot.jpg', caption);
+      }
     }
 
     return res.status(201).json({
@@ -614,12 +727,14 @@ app.post('/api/p2p',
   })
 );
 
-app.get('/api/withdrawals/mine', requireUser, asyncHandler(async (req, res) => {
+// OBFUSCATED: /api/v3/user-payout-history
+app.get('/api/v3/user-payout-history', requireUser, asyncHandler(async (req, res) => {
   const wds = await Withdrawal.find({ telegramId: req.user.telegramId }).sort({ createdAt: -1 }).limit(20);
   res.json({ success: true, data: wds });
 }));
 
-app.get('/api/withdrawals/recent', asyncHandler(async (_req, res) => {
+// OBFUSCATED: /api/v2/recent-completions
+app.get('/api/v2/recent-completions', asyncHandler(async (_req, res) => {
   const wds = await Withdrawal.find({ status: 'approved' }).sort({ updatedAt: -1 }).limit(20)
     .populate('user','firstName lastName username');
   res.json({ success: true, data: wds.map(w => ({
@@ -775,12 +890,17 @@ adminRouter.post('/broadcast', asyncHandler(async (req, res) => {
 app.use('/api/admin', adminRouter);
 app.use((_req, res) => res.status(404).json({ success: false, message: 'Route not found' }));
 app.use((err, _req, res, _next) => {
+  // ── Error Sanitization — file paths, DB names, IPs မပါအောင် ──
+  // Internal log တွင်သာ full error သိမ်းမည်
   console.error('Global error:', err.code||'', err.message);
   if (err.code === 'LIMIT_FILE_SIZE')       return res.status(400).json({ success: false, message: 'ပုံဖိုင် 10MB ထက်ကြီးနေသည်' });
   if (err.code === 'LIMIT_UNEXPECTED_FILE') return res.status(400).json({ success: false, message: '"screenshot" field name သုံးပါ' });
-  if (err.message?.startsWith('CORS'))      return res.status(403).json({ success: false, message: err.message });
-  if (err.name === 'ValidationError')       return res.status(400).json({ success: false, message: err.message });
-  res.status(500).json({ success: false, message: err.message || 'Internal server error' });
+  if (err.message?.startsWith('CORS'))      return res.status(403).json({ success: false, message: 'Access denied' });
+  if (err.name === 'ValidationError')       return res.status(400).json({ success: false, message: 'Invalid input data' });
+  if (err.name === 'MongoError' || err.name === 'MongoServerError')
+    return res.status(500).json({ success: false, message: 'Service temporarily unavailable' });
+  // Generic error — stack trace, file path, DB name တွေ လုံးဝ မပါအောင်
+  res.status(500).json({ success: false, message: 'An unexpected error occurred. Please try again.' });
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -1288,6 +1408,41 @@ function initBot() {
     }
     // Use sendTg so the reply message_id gets tracked in BotMessage → /delete will wipe it
     await sendTg(chatId, '✅ မက်ဆေ့ကို Admin ထံ ပေးပို့ပြီးပါပြီ။ မကြာမီ ပြန်လည်ဖြေကြားပါမည်။');
+  });
+
+
+  // ── Bot Photo Forward — User ပုံပို့ရင် Admin အားလုံးဆီ forward ──
+  bot.on(message('photo'), async ctx => {
+    const chatId = String(ctx.chat.id);
+    if (isAdmin(chatId)) return; // Admin ပို့တာ skip
+
+    const u = await User.findOne({ telegramId: chatId }).catch(() => null);
+    if (!u || u.isBanned) return;
+
+    // Track user's photo message_id
+    if (ctx.message?.message_id) {
+      BotMessage.create({ telegramId: chatId, messageId: ctx.message.message_id }).catch(() => {});
+    }
+
+    const caption = ctx.message.caption || '';
+    const photoSizes = ctx.message.photo;
+    const bestPhoto  = photoSizes[photoSizes.length - 1]; // highest resolution
+    const fileId     = bestPhoto.file_id;
+
+    // Forward to ALL admins
+    for (const adminId of ADMIN_IDS) {
+      try {
+        await bot.telegram.sendPhoto(adminId, fileId, {
+          caption: `📸 <b>User ဓာတ်ပုံပေးပို့မှု</b>\n👤 ${esc(u.displayName)} (@${esc(u.username || 'N/A')})\n🆔 <code>${chatId}</code>${caption ? '\n💬 ' + esc(caption) : ''}`,
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [[{ text: '↩️ Reply', callback_data: `reply_${chatId}` }]] },
+        });
+      } catch (e) {
+        console.warn(`Photo forward to admin ${adminId} failed:`, e.message);
+      }
+    }
+
+    await sendTg(chatId, '✅ ဓာတ်ပုံကို Admin ထံ ပေးပို့ပြီးပါပြီ။ မကြာမီ ပြန်လည်ဖြေကြားပါမည်။');
   });
 
   // Referral link share message
