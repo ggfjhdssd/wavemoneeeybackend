@@ -1,0 +1,51 @@
+name: 🔄 Auto-Deploy to Render
+
+on:
+  # ── ၅ မိနစ်တစ်ကြိမ် Render Deploy Hook ကို အလိုအလျောက် ခေါ်မည် ──
+  schedule:
+    - cron: '*/5 * * * *'   # UTC အချိန်ဖြင့် ၅ မိနစ်တစ်ကြိမ်
+
+  # ── GitHub ပေါ်မှ Manual trigger လည်း ခွင့်ပြုသည် ──
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Deploy reason (optional)'
+        required: false
+        default: 'Manual trigger'
+
+jobs:
+  trigger-render-deploy:
+    name: 🚀 Trigger Render Redeploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 📅 Show timestamp
+        run: |
+          echo "🕐 Deploy triggered at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "📌 Reason: ${{ github.event.inputs.reason || 'Scheduled (every 5 min)' }}"
+
+      - name: 🔔 Ping Render Deploy Hook
+        run: |
+          echo "🚀 Calling Render Deploy Hook..."
+
+          HTTP_STATUS=$(curl -s -o /tmp/render_response.txt -w "%{http_code}" \
+            --max-time 30 \
+            --retry 3 \
+            --retry-delay 5 \
+            -X GET \
+            "${{ secrets.RENDER_DEPLOY_HOOK_URL }}")
+
+          RESPONSE=$(cat /tmp/render_response.txt)
+          echo "📡 HTTP Status: $HTTP_STATUS"
+          echo "📦 Response: $RESPONSE"
+
+          if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "201" ]; then
+            echo "✅ Deploy triggered successfully!"
+          else
+            echo "❌ Deploy hook returned status: $HTTP_STATUS"
+            exit 1
+          fi
+
+      - name: ✅ Done
+        run: echo "🎉 Render redeploy triggered successfully at $(date -u '+%H:%M:%S UTC')"
