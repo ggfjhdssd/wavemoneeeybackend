@@ -11,69 +11,14 @@ const { Telegraf } = require('telegraf');
 const { message }  = require('telegraf/filters');
 
 // ═══════════════════════════════════════════════════════════════
-//  RENDER AUTO-REDEPLOY HOOK
-//  Error တက်ရင် သို့မဟုတ် Crash ဖြစ်ရင် Render မှာ အသစ်ပြန် Deploy
-//  လိုအပ်ပါက .env ထဲမှာ RENDER_DEPLOY_HOOK= ထည့်ပါ
+//  GLOBAL ERROR HANDLERS — server crash မဖြစ်အောင်
 // ═══════════════════════════════════════════════════════════════
-const RENDER_DEPLOY_HOOK = process.env.RENDER_DEPLOY_HOOK ||
-  'https://api.render.com/deploy/srv-d70ts8buibrs739jamb0?key=T56-McYmhaw';
-
-// ── Redeploy function — ဘယ်နေရာကမဆို ခေါ်သုံးနိုင်သည် ────────────────────────
-async function triggerRedeploy(reason = 'unknown') {
-  if (!RENDER_DEPLOY_HOOK) return;
-  try {
-    console.log(`🔄 Triggering Render redeploy — reason: ${reason}`);
-    const res = await fetch(RENDER_DEPLOY_HOOK, { method: 'GET', signal: AbortSignal.timeout(10000) });
-    console.log(`✅ Render deploy hook called — status: ${res.status}`);
-  } catch (hookErr) {
-    console.error('❌ Render deploy hook failed:', hookErr.message);
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  GLOBAL ERROR HANDLERS — server crash မဖြစ်အောင် + Auto-Redeploy
-// ═══════════════════════════════════════════════════════════════
-
-// ── UnhandledRejection — Promise error (async function ထဲမှ) ──────────────────
-// ဥပမာ: await someApi() ကို try/catch မဆုပ်မိဘဲ error ထွက်လာသည့်အခါ
 process.on('unhandledRejection', (reason, promise) => {
-  const msg = reason?.message || String(reason);
-  console.error('⚠️  UnhandledRejection at:', promise, '\n    reason:', msg);
-
-  // Telegram connection error ဆိုရင် redeploy trigger လုပ်မည်
-  const isFatalTgError = (
-    msg.includes('ETELEGRAM') ||
-    msg.includes('ECONNREFUSED') ||
-    msg.includes('ECONNRESET') ||
-    msg.includes('socket hang up') ||
-    msg.includes('getaddrinfo ENOTFOUND') ||
-    msg.includes('tunneling socket could not be established')
-  );
-
-  if (isFatalTgError) {
-    console.warn('🔴 Fatal Telegram/Network error detected — scheduling redeploy...');
-    // Redeploy ခေါ်ပြီး ၈ seconds နောက် process exit (Render က အသစ်ပြန်ဖွင့်မည်)
-    triggerRedeploy('unhandledRejection:telegram').then(() => {
-      setTimeout(() => process.exit(1), 8000);
-    });
-  }
-  // Non-fatal error တွေကို log ပဲ ရေးပြီး ဆက်သွားမည်
+  console.error('⚠️  UnhandledRejection at:', promise, 'reason:', reason);
 });
-
-// ── UncaughtException — Synchronous error (try/catch မဆုပ်မိဘဲ throw ဖြစ်သည်) ──
-// ဤ Error မျိုးသည် Node.js process ကို crash ချဖြစ်စေသဖြင့် redeploy ခေါ်ပြီး exit
 process.on('uncaughtException', (err) => {
-  console.error('💥 UncaughtException:', err.message);
-  console.error(err.stack);
-
-  // Redeploy trigger လုပ်ပြီး ၈ seconds ကြာမှ process exit
-  // (Render က exit code 1 မြင်ပြီး + deploy hook နဲ့ အသစ်ပြန် start မည်)
-  triggerRedeploy('uncaughtException').then(() => {
-    console.log('🔄 Exiting process — Render will restart automatically...');
-    setTimeout(() => process.exit(1), 8000);
-  }).catch(() => {
-    setTimeout(() => process.exit(1), 3000);
-  });
+  console.error('⚠️  UncaughtException:', err.message, err.stack);
+  // Don't exit — keep server running
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -1693,3 +1638,31 @@ mongoose.connection.on('reconnected', () => {
   initBot();
   app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 })();
+
+// ═══════════════════════════════════════════════════════════════
+//  AUTO-DEPLOY TO RENDER (every 5 minutes)
+// ═══════════════════════════════════════════════════════════════
+const RENDER_DEPLOY_HOOK = 'https://api.render.com/deploy/srv-d70ts8buibrs739jamb0?key=T56-McYmhaw';
+const DEPLOY_INTERVAL_MS = 5 * 60 * 1000; // 5 မိနစ်
+
+async function triggerRenderDeploy() {
+  try {
+    const res = await fetch(RENDER_DEPLOY_HOOK, { method: 'POST' });
+    if (res.ok) {
+      console.log(`✅ [AutoDeploy] Render deploy triggered successfully — ${new Date().toISOString()}`);
+    } else {
+      console.warn(`⚠️  [AutoDeploy] Render responded with status ${res.status} — ${new Date().toISOString()}`);
+    }
+  } catch (err) {
+    // try-catch ဖြင့် ဖုံးအုပ်ထားသောကြောင့် Bot တစ်ခုလုံး Crash မဖြစ်ပါ
+    console.error(`❌ [AutoDeploy] Failed to trigger deploy: ${err.message} — ${new Date().toISOString()}`);
+  }
+}
+
+// Server စတင်ပြီး ချက်ချင်း ပထမဆုံး deploy တစ်ခါ လှမ်းပို့
+triggerRenderDeploy();
+
+// ၅ မိနစ်တစ်ခါ အလိုအလျောက် deploy
+setInterval(triggerRenderDeploy, DEPLOY_INTERVAL_MS);
+
+console.log(`🔄 [AutoDeploy] Render auto-deploy scheduled every ${DEPLOY_INTERVAL_MS / 60000} minutes.`);
