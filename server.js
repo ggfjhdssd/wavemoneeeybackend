@@ -186,7 +186,7 @@ const ALLOWED_ORIGINS = [
   FRONTEND_URL,
   'https://wavepay.vercel.app',
   'https://wavemoneeyfrontend.vercel.app',
-  'https://wavemoneeeybackend-f8nn.onrender.com',
+  'https://wavemoneeeybackend.onrender.com',
   'http://localhost:3000',
   'http://localhost:5000',
 ];
@@ -1640,29 +1640,25 @@ mongoose.connection.on('reconnected', () => {
 })();
 
 // ═══════════════════════════════════════════════════════════════
-//  AUTO-DEPLOY TO RENDER (every 5 minutes)
+//  KEEP-ALIVE PING — Render free tier sleep မသွားအောင်
+//  (5 မိနစ်တစ်ခါ ကိုယ့် server ကိုယ် ping ထုတ်)
 // ═══════════════════════════════════════════════════════════════
-const RENDER_DEPLOY_HOOK = 'https://api.render.com/deploy/srv-d70ts8buibrs739jamb0?key=T56-McYmhaw';
-const DEPLOY_INTERVAL_MS = 5 * 60 * 1000; // 5 မိနစ်
+const SELF_URL = 'https://wavemoneeeybackend-f8nn.onrender.com/health';
+const PING_INTERVAL_MS = 5 * 60 * 1000; // 5 မိနစ်
 
-async function triggerRenderDeploy() {
+async function keepAlive() {
   try {
-    const res = await fetch(RENDER_DEPLOY_HOOK, { method: 'POST' });
-    if (res.ok) {
-      console.log(`✅ [AutoDeploy] Render deploy triggered successfully — ${new Date().toISOString()}`);
-    } else {
-      console.warn(`⚠️  [AutoDeploy] Render responded with status ${res.status} — ${new Date().toISOString()}`);
-    }
+    const res = await fetch(SELF_URL, { method: 'GET' });
+    console.log(`✅ [KeepAlive] Ping OK — status ${res.status} — ${new Date().toISOString()}`);
   } catch (err) {
-    // try-catch ဖြင့် ဖုံးအုပ်ထားသောကြောင့် Bot တစ်ခုလုံး Crash မဖြစ်ပါ
-    console.error(`❌ [AutoDeploy] Failed to trigger deploy: ${err.message} — ${new Date().toISOString()}`);
+    console.error(`⚠️  [KeepAlive] Ping failed: ${err.message} — ${new Date().toISOString()}`);
   }
 }
 
-// Server စတင်ပြီး ချက်ချင်း ပထမဆုံး deploy တစ်ခါ လှမ်းပို့
-triggerRenderDeploy();
+// Server start ပြီး 30 စက္ကန့်နောက် ပထမဆုံး ping စပို့
+setTimeout(() => {
+  keepAlive();
+  setInterval(keepAlive, PING_INTERVAL_MS);
+}, 30000);
 
-// ၅ မိနစ်တစ်ခါ အလိုအလျောက် deploy
-setInterval(triggerRenderDeploy, DEPLOY_INTERVAL_MS);
-
-console.log(`🔄 [AutoDeploy] Render auto-deploy scheduled every ${DEPLOY_INTERVAL_MS / 60000} minutes.`);
+console.log('🔄 [KeepAlive] Self-ping scheduled every 5 minutes.');
