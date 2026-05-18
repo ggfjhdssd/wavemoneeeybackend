@@ -1,110 +1,3 @@
-require('dotenv').config();
-const crypto = require('crypto');
-
-const express    = require('express');
-const mongoose   = require('mongoose');
-const cors       = require('cors');
-const helmet     = require('helmet');
-const rateLimit  = require('express-rate-limit');
-const multer     = require('multer');
-const { Telegraf } = require('telegraf');
-const { message }  = require('telegraf/filters');
-
-// ═══════════════════════════════════════════════════════════════
-//  GLOBAL ERROR HANDLERS — server crash မဖြစ်အောင်
-// ═══════════════════════════════════════════════════════════════
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('⚠️  UnhandledRejection at:', promise, 'reason:', reason);
-});
-process.on('uncaughtException', (err) => {
-  console.error('⚠️  UncaughtException:', err.message, err.stack);
-  // Don't exit — keep server running
-});
-
-// ═══════════════════════════════════════════════════════════════
-//  CONSTANTS
-// ═══════════════════════════════════════════════════════════════
-const PORT           = process.env.PORT           || 5000;
-// Support multiple admin IDs: comma-separated in ADMIN_CHAT_ID env var (e.g. 7xxxxxx,8xxxxxx)
-const ADMIN_IDS      = (process.env.ADMIN_CHAT_ID || '').split(',').map(s => s.trim()).filter(Boolean);
-const ADMIN_ID       = ADMIN_IDS[0] || ''; // primary admin (receives notifications)
-const isAdmin        = (chatId) => ADMIN_IDS.includes(String(chatId));
-const ADMIN_SECRET   = process.env.ADMIN_SECRET   || 'changeme_admin_secret';
-const MIN_WITHDRAW   = Number(process.env.MIN_WITHDRAW)   || 100000;
-const SERVICE_FEE    = Number(process.env.SERVICE_FEE)    || 5000;
-const REFERRAL_BONUS = Number(process.env.REFERRAL_BONUS) || 5000;
-const PAYMENT_PHONE  = process.env.PAYMENT_PHONE  || '09783646736';
-const PAYMENT_NAME   = process.env.PAYMENT_NAME   || 'Yee Mon Naing';
-const BOT_USERNAME   = process.env.BOT_USERNAME   || 'YourBotUsername';
-const FRONTEND_URL   = 'https://wavemoneeyfrontend.vercel.app';
-// Channel that users must join before using the bot
-const CHANNEL_ID     = process.env.CHANNEL_ID    || '@Kbzzpay';   // e.g. @Kbzzpay
-const CHANNEL_LINK   = process.env.CHANNEL_LINK  || 'https://t.me/Kbzzpay';
-
-// ═══════════════════════════════════════════════════════════════
-//  ASYNC HANDLER WRAPPER — try/catch ထပ်ခါတလဲ မရေးရအောင်
-// ═══════════════════════════════════════════════════════════════
-const asyncHandler = (fn) => (req, res, next) =>
-  Promise.resolve(fn(req, res, next)).catch(next);
-
-
-// ═══════════════════════════════════════════════════════════════
-//  HTML ESCAPE — Telegram HTML parse_mode အတွက်
-//  User name မှာ <, >, & ပါနေရင် crash မဖြစ်အောင်
-// ═══════════════════════════════════════════════════════════════
-const esc = (str) => String(str||'')
-  .replace(/&/g,'&amp;')
-  .replace(/</g,'&lt;')
-  .replace(/>/g,'&gt;');
-
-// ═══════════════════════════════════════════════════════════════
-//  MULTER — Memory storage
-// ═══════════════════════════════════════════════════════════════
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
-  fileFilter: (_req, file, cb) => {
-    const OK = ['image/jpeg','image/jpg','image/png','image/webp','image/gif'];
-    if (OK.includes(file.mimetype)) cb(null, true);
-    else cb(new Error(`ပုံဖိုင်သာ တင်ခွင့်ရှိသည် (JPG/PNG/WEBP) — ရရှိသောဖိုင်: ${file.mimetype}`), false);
-  },
-});
-
-const handleMulterError = (err, req, res, next) => {
-  if (!err) return next();
-  if (err.code === 'LIMIT_FILE_SIZE')
-    return res.status(400).json({ success: false, message: 'ပုံဖိုင် 10MB ထက်ကြီးနေသည်' });
-  if (err.code === 'LIMIT_UNEXPECTED_FILE')
-    return res.status(400).json({ success: false, message: `"screenshot" field name သုံးပါ (received: ${err.field})` });
-  if (err.message?.includes('ပုံဖိုင်သာ'))
-    return res.status(400).json({ success: false, message: err.message });
-  next(err);
-};
-
-// ═══════════════════════════════════════════════════════════════
-//  MONGOOSE MODELS
-// ═══════════════════════════════════════════════════════════════
-
-// User — compound indexes for 10,000+ users
-const userSchema = new mongoose.Schema({
-  telegramId:     { type: String, required: true, unique: true },
-  firstName:      { type: String, default: '' },
-  lastName:       { type: String, default: '' },
-  username:       { type: String, default: '' },
-  balance:        { type: Number, default: 0, min: 0 },
-  totalEarned:    { type: Number, default: 0 },
-  totalWithdrawn: { type: Number, default: 0 },
-  referrals:      { type: Number, default: 0 },
-  referredBy:     { type: String, default: null },
-  referralCode:   { type: String, unique: true, sparse: true },
-  isBanned:       { type: Boolean, default: false },
-  isBlocked:      { type: Boolean, default: false }, // bot blocked by user
-  banReason:      { type: String, default: '' },
-  isAdmin:        { type: Boolean, default: false },
-  lastSeen:       { type: Date, default: Date.now },
-  lastBonusClaim: { type: Number, default: 0 }, // unix ms — for 2hr cooldown
-}, { timestamps: true });
-
 // Optimized indexes
 // telegramId index already defined via unique:true in schema
 userSchema.index({ referralCode: 1 }, { sparse: true });
@@ -128,7 +21,7 @@ const withdrawalSchema = new mongoose.Schema({
   netAmount:           { type: Number, required: true },
   userKpayPhone:       { type: String, default: '' },
   userKpayName:        { type: String, default: '' },
-  telegramPhotoFileId: { type: String, default: '' },
+  telegramPhotoFileId: { type: String, defaul
   status:              { type: String, enum: ['pending','approved','rejected'], default: 'pending' },
   rejectionReason:     { type: String, default: '' },
   adminNote:           { type: String, default: '' },
