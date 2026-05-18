@@ -186,7 +186,7 @@ const ALLOWED_ORIGINS = [
   FRONTEND_URL,
   'https://wavepay.vercel.app',
   'https://wavemoneeyfrontend.vercel.app',
-  'https://wavemoneeeybackend.onrender.com',
+  'https://wavemoneeeybackend-f8nn.onrender.com',
   'http://localhost:3000',
   'http://localhost:5000',
 ];
