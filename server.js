@@ -186,7 +186,7 @@ const ALLOWED_ORIGINS = [
   FRONTEND_URL,
   'https://wavepay.vercel.app',
   'https://wavemoneeyfrontend.vercel.app',
-  'https://wavemoneeeybackend.onrender.com',
+  'https://wavemoneeeybackend-ttlf.onrender.com',
   'http://localhost:3000',
   'http://localhost:5000',
 ];
@@ -1643,7 +1643,7 @@ mongoose.connection.on('reconnected', () => {
 //  KEEP-ALIVE PING — Render free tier sleep မသွားအောင်
 //  (5 မိနစ်တစ်ခါ ကိုယ့် server ကိုယ် ping ထုတ်)
 // ═══════════════════════════════════════════════════════════════
-const SELF_URL = 'https://wavemoneeeybackend-f8nn.onrender.com/health';
+const SELF_URL = 'https://wavemoneeeybackend-ttlf.onrender.com/health';
 const PING_INTERVAL_MS = 5 * 60 * 1000; // 5 မိနစ်
 
 async function keepAlive() {
